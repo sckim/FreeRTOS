@@ -1,0 +1,42 @@
+#ifndef GPIO_HANDLER_H
+#define GPIO_HANDLER_H
+
+#include "config.h"
+
+typedef enum {
+    BUTTON_NO_EVENT = 0,  // 이벤트 없음을 나타내는 값 추가
+    BUTTON_SHORT_PRESS,
+    BUTTON_LONG_PRESS
+} ButtonEvent_t;
+
+class ButtonHandler {
+private:
+    int pin;
+    unsigned long debounceDelay;
+    unsigned long lastDebounceTime;
+    bool lastButtonState;
+    bool buttonState;
+    unsigned long pressStartTime;
+    bool isPressed;
+    bool isInitialized;
+
+public:
+    ButtonHandler(int pin, unsigned long debounceDelay = 50);
+    ButtonEvent_t checkButton();
+    bool isButtonPressed() const;
+};
+
+
+class LEDHandler {
+private:
+    const int pin;
+
+public:
+    LEDHandler(int pin);
+    void turnOnOff(int state);
+    void shortBlink();
+    void longBlink();
+    void errorBlink();
+};
+
+#endif // GPIO_HANDLER_H

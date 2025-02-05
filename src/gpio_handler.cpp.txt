@@ -1,0 +1,78 @@
+#include "gpio_handler.h"
+
+ButtonHandler::ButtonHandler(int pin, unsigned long debounceDelay)
+    : pin(pin), debounceDelay(debounceDelay), lastDebounceTime(0),
+      lastButtonState(HIGH), buttonState(HIGH), pressStartTime(0), isPressed(false) {
+    pinMode(pin, INPUT_PULLUP);  // Normally high
+}
+
+ButtonEvent_t ButtonHandler::checkButton() {
+    ButtonEvent_t event = BUTTON_NO_EVENT;
+    int reading = digitalRead(pin); // Pressed: LOW, Released: HIGH
+
+    if (reading != lastButtonState) {
+        lastDebounceTime = millis();
+    }
+
+    if ((millis() - lastDebounceTime) > debounceDelay) {
+        if (reading != buttonState) {
+            buttonState = reading;
+
+            if (buttonState == LOW) {
+                pressStartTime = millis();
+                isPressed = true;
+            } else if (isPressed) {
+                unsigned long pressDuration = millis() - pressStartTime;
+                isPressed = false;
+                
+                if (pressDuration >= LONG_PRESS_TIME) {
+                    DEBUG_PRINTF("BUTTON_LONG_PRESS\n");
+                    event = BUTTON_LONG_PRESS;
+                } else {
+                    DEBUG_PRINTF("BUTTON_SHORT_PRESS\n");   
+                    event = BUTTON_SHORT_PRESS;
+                }
+            }
+        }
+    }
+
+    lastButtonState = reading;
+    return event ;  // 기본값 반환
+}
+
+bool ButtonHandler::isButtonPressed() const {
+    return isPressed;
+}
+
+
+LEDHandler::LEDHandler(int pin) : pin(pin) {
+    pinMode(pin, OUTPUT);
+}
+
+void LEDHandler::turnOnOff(int state) {
+    if( state == LED_STATE_ON )
+        digitalWrite(pin, HIGH);
+    else
+        digitalWrite(pin, LOW);
+}   
+
+void LEDHandler::shortBlink() {
+    digitalWrite(pin, HIGH);
+    delay(200);
+    digitalWrite(pin, LOW);
+}
+
+void LEDHandler::longBlink() {
+    digitalWrite(pin, HIGH);
+    delay(2000);
+    digitalWrite(pin, LOW);
+}
+
+void LEDHandler::errorBlink() {
+    while (true) {
+        digitalWrite(pin, HIGH);
+        delay(500);
+        digitalWrite(pin, LOW);
+        delay(500);
+    }
+}

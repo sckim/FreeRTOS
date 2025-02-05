@@ -1,0 +1,22 @@
+/* unity_config.h */
+#ifndef UNITY_CONFIG_H
+#define UNITY_CONFIG_H
+
+void unittest_uart_begin() {
+    Serial.begin(115200);
+    delay(2000); // wait for serial port to connect
+}
+
+void unittest_uart_putchar(int c) {
+    Serial.write(c);
+}
+
+void unittest_uart_flush() {
+    Serial.flush();
+}
+
+void unittest_uart_end() {
+    Serial.end();
+}
+
+#endif /* UNITY_CONFIG_H */

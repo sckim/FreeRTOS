@@ -1,0 +1,101 @@
+#ifndef DFU_SERVICE_H
+#define DFU_SERVICE_H
+
+#include <bluefruit.h>
+#include "config.h"
+#include "error_handler.h"
+
+// DFU 서비스 및 특성 UUID 정의
+#define DFU_SERVICE_UUID           0xFE59
+#define DFU_CONTROL_CHAR_UUID     0x8EC90001
+#define DFU_PACKET_CHAR_UUID      0x8EC90002
+#define DFU_VERSION_CHAR_UUID     0x8EC90003
+
+// DFU 패킷 크기 및 버퍼 크기 정의
+#define DFU_PACKET_SIZE           20
+#define DFU_BUFFER_SIZE          (128 * 1024)  // 128KB
+
+// DFU 명령어 정의
+#define DFU_CMD_START            0x01
+#define DFU_CMD_CANCEL           0x02
+#define DFU_CMD_COMPLETE         0x03
+#define DFU_CMD_GET_STATE        0x04
+
+// DFU 상태 정의
+enum DFUState {
+    DFU_STATE_IDLE = 0x00,
+    DFU_STATE_RECEIVING = 0x01,
+    DFU_STATE_VALIDATING = 0x02,
+    DFU_STATE_COMPLETE = 0x03,
+    DFU_STATE_ERROR = 0xFF
+};
+
+// DFU 에러 코드 정의
+enum DFUError {
+    DFU_ERROR_NONE = 0x00,
+    DFU_ERROR_SIZE = 0x01,
+    DFU_ERROR_CRC = 0x02,
+    DFU_ERROR_VERSION = 0x03,
+    DFU_ERROR_MEMORY = 0x04,
+    DFU_ERROR_INVALID_STATE = 0x05,
+    DFU_ERROR_WRITE_FAILED = 0x06
+};
+
+// 펌웨어 헤더 구조체
+struct __attribute__((packed)) FirmwareHeader {
+    uint32_t magic;          // 매직 넘버 (0x44465500 "DFU\0")
+    uint32_t version;        // 펌웨어 버전
+    uint32_t size;          // 펌웨어 크기
+    uint32_t crc;           // CRC32 체크섬
+    uint8_t board_id[16];   // 보드 식별자
+    uint8_t reserved[16];   // 추후 확장용 예약 영역
+};
+
+class DFUService {
+private:
+    BLEService dfuService;
+    
+    BLECharacteristic dfuControlChar;
+    BLECharacteristic dfuPacketChar;
+    BLECharacteristic dfuVersionChar;
+    
+    uint8_t* dfuBuffer;
+    uint32_t dfuBufferOffset;
+    uint32_t expectedImageSize;
+    DFUState dfuState;
+    DFUError lastError;
+    uint32_t lastProgress;
+    
+    static DFUService* instance;
+    static const uint32_t crc32_table[256];
+    
+    // BLE 콜백 함수
+    static void onDFUControlReceived(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint16_t len);
+    static void onDFUPacketReceived(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint16_t len);
+    
+    // 내부 처리 함수
+    void processControlCommand(uint8_t* data, uint16_t len);
+    void processDataPacket(uint8_t* data, uint16_t len);
+    bool validateFirmware();
+    bool verifyBoardID();
+    void applyUpdate();
+    uint32_t calculateCRC32(const uint8_t* data, size_t length);
+    void setError(DFUError error);
+    bool allocateBuffer(uint32_t size);
+    void freeBuffer();
+    void notifyProgress();
+    
+public:
+    DFUService();
+    ~DFUService();
+    
+    void begin();
+    void handleTask();
+    bool isUpdateInProgress() const { return dfuState == DFU_STATE_RECEIVING; }
+    DFUState getCurrentState() const { return dfuState; }
+    DFUError getLastError() const { return lastError; }
+    
+    static DFUService* getInstance() { return instance; }
+};
+
+#endif // DFU_SERVICE_H

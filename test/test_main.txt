@@ -1,0 +1,74 @@
+#include <Arduino.h>
+#include <unity.h>
+#include "config.h"
+#include "gpio_handler.h"
+#include "adc_handler.h"
+#include "ble_handler.h"
+
+// Test specific declarations
+ButtonHandler* testButton;
+LEDHandler* testLed;
+ADCHandler* testAdc;
+
+// Mock variables
+int mockADCValue = 0;
+uint8_t mockLEDState = LOW;
+
+void setUp(void) {
+    // Initialize test objects
+    testButton = new ButtonHandler(BUTTON_PIN);
+    testLed = new LEDHandler(LED_PIN);
+    testAdc = new ADCHandler(ADC_PIN);
+    
+    // Reset mock values
+    mockADCValue = 0;
+    mockLEDState = LOW;
+}
+
+void tearDown(void) {
+    delete testButton;
+    delete testLed;
+    delete testAdc;
+}
+
+// Basic GPIO Tests
+void test_button_initial_state(void) {
+    TEST_ASSERT_FALSE(testButton->isButtonPressed());
+}
+
+void test_led_state(void) {
+    testLed->turnOnOff(LED_STATE_ON);
+    TEST_ASSERT_EQUAL(HIGH, mockLEDState);
+    
+    testLed->turnOnOff(LED_STATE_OFF);
+    TEST_ASSERT_EQUAL(LOW, mockLEDState);
+}
+
+// ADC Tests
+void test_adc_initialization(void) {
+    testAdc->init();
+    TEST_ASSERT_EQUAL(0, testAdc->getLastValue());
+}
+
+void test_adc_reading(void) {
+    mockADCValue = 2048;
+    int result = testAdc->readADC();
+    TEST_ASSERT_EQUAL(2048, result);
+    TEST_ASSERT_EQUAL(2048, testAdc->getLastValue());
+}
+
+void setup() {
+    delay(2000);
+    UNITY_BEGIN();
+    
+    RUN_TEST(test_button_initial_state);
+    RUN_TEST(test_led_state);
+    RUN_TEST(test_adc_initialization);
+    RUN_TEST(test_adc_reading);
+    
+    UNITY_END();
+}
+
+void loop() {
+    // Empty
+}

@@ -1,0 +1,281 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverflow"
+#include "dfu_handler.h"
+
+// CRC32 테이블 초기화
+const uint32_t DFUService::crc32_table[256] = {
+    0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA,
+    // ... (나머지 CRC32 테이블 값들)
+};
+
+DFUService* DFUService::instance = nullptr;
+
+DFUService::DFUService() : 
+    dfuService(DFU_SERVICE_UUID),
+    dfuControlChar(DFU_CONTROL_CHAR_UUID),
+    dfuPacketChar(DFU_PACKET_CHAR_UUID),
+    dfuVersionChar(DFU_VERSION_CHAR_UUID),
+    dfuBuffer(nullptr),
+    dfuBufferOffset(0),
+    expectedImageSize(0),
+    dfuState(DFU_STATE_IDLE),
+    lastError(DFU_ERROR_NONE),
+    lastProgress((uint8_t)0U)
+{
+    instance = this;
+}
+#pragma GCC diagnostic pop
+
+DFUService::~DFUService() {
+    freeBuffer();
+}
+
+void DFUService::begin() {
+    // DFU 서비스 시작
+    dfuService.begin();
+
+    // Control 특성값 설정
+    dfuControlChar.setProperties(CHR_PROPS_WRITE | CHR_PROPS_NOTIFY);
+    dfuControlChar.setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    dfuControlChar.setFixedLen(1);
+    dfuControlChar.setWriteCallback(onDFUControlReceived);
+    dfuControlChar.begin();
+
+    // Packet 특성값 설정
+    dfuPacketChar.setProperties(CHR_PROPS_WRITE_WO_RESP);
+    dfuPacketChar.setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    dfuPacketChar.setFixedLen(DFU_PACKET_SIZE);
+    dfuPacketChar.setWriteCallback(onDFUPacketReceived);
+    dfuPacketChar.begin();
+
+    // Version 특성값 설정
+    dfuVersionChar.setProperties(CHR_PROPS_READ);
+    dfuVersionChar.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+    dfuVersionChar.setFixedLen(4);
+    uint8_t version[4] = {0, 1, 0, 0}; // v0.1.0.0
+    dfuVersionChar.write(version, 4);
+    dfuVersionChar.begin();
+}
+
+void DFUService::handleTask() {
+    if (dfuState == DFU_STATE_RECEIVING) {
+        notifyProgress();
+    }
+}
+
+void DFUService::processControlCommand(uint8_t* data, uint16_t len) {
+    if (len < 1) return;
+
+    switch (data[0]) {
+        case DFU_CMD_START:
+            if (len == 5) {
+                if (dfuState != DFU_STATE_IDLE) {
+                    setError(DFU_ERROR_INVALID_STATE);
+                    return;
+                }
+
+                uint32_t requestedSize = (data[1] << 24) | (data[2] << 16) | 
+                                       (data[3] << 8) | data[4];
+                
+                if (!allocateBuffer(requestedSize)) {
+                    setError(DFU_ERROR_MEMORY);
+                    return;
+                }
+                
+                expectedImageSize = requestedSize;
+                dfuBufferOffset = 0;
+                dfuState = DFU_STATE_RECEIVING;
+                uint8_t response = dfuState;
+                dfuControlChar.notify(&response, 1);
+            }
+            break;
+
+        case DFU_CMD_CANCEL:
+            freeBuffer();
+            dfuState = DFU_STATE_IDLE;
+            {
+                uint8_t response = dfuState;
+                dfuControlChar.notify(&response, 1);
+            }
+            break;
+
+        case DFU_CMD_COMPLETE:
+            if (dfuState == DFU_STATE_RECEIVING && 
+                dfuBufferOffset == expectedImageSize) {
+                
+                dfuState = DFU_STATE_VALIDATING;
+                if (validateFirmware()) {
+                    dfuState = DFU_STATE_COMPLETE;
+                    applyUpdate();
+                }
+            } else {
+                setError(DFU_ERROR_SIZE);
+            }
+            break;
+
+        case DFU_CMD_GET_STATE: {
+            uint8_t response[2] = {dfuState, (uint8_t)lastError};
+            dfuControlChar.notify(response, 2);
+            break;
+        }
+    }
+}
+
+void DFUService::processDataPacket(uint8_t* data, uint16_t len) {
+    if (dfuState != DFU_STATE_RECEIVING) {
+        setError(DFU_ERROR_INVALID_STATE);
+        return;
+    }
+
+    if (dfuBufferOffset + len > expectedImageSize) {
+        setError(DFU_ERROR_SIZE);
+        return;
+    }
+
+    memcpy(dfuBuffer + dfuBufferOffset, data, len);
+    dfuBufferOffset += len;
+}
+
+bool DFUService::validateFirmware() {
+    if (expectedImageSize < sizeof(FirmwareHeader)) {
+        setError(DFU_ERROR_SIZE);
+        return false;
+    }
+
+    FirmwareHeader* header = (FirmwareHeader*)dfuBuffer;
+    
+    // 매직 넘버 검사
+    if (header->magic != 0x44465500) {
+        setError(DFU_ERROR_VERSION);
+        return false;
+    }
+
+    // 크기 검증
+    if (header->size != expectedImageSize - sizeof(FirmwareHeader)) {
+        setError(DFU_ERROR_SIZE);
+        return false;
+    }
+
+    // 보드 ID 검증
+    if (!verifyBoardID()) {
+        setError(DFU_ERROR_VERSION);
+        return false;
+    }
+
+    // CRC 검증
+    uint32_t calculatedCRC = calculateCRC32(
+        dfuBuffer + sizeof(FirmwareHeader), 
+        expectedImageSize - sizeof(FirmwareHeader)
+    );
+    
+    if (calculatedCRC != header->crc) {
+        setError(DFU_ERROR_CRC);
+        return false;
+    }
+
+    return true;
+}
+
+bool DFUService::verifyBoardID() {
+    // FirmwareHeader* header = (FirmwareHeader*)dfuBuffer;
+    // 보드 ID 검증 로직 구현
+    // 예: 현재 보드의 ID와 펌웨어 헤더의 board_id 비교
+    return true;  // 임시 구현
+}
+
+void DFUService::applyUpdate() {
+    // 백업 영역에 새 펌웨어 복사
+    uint32_t* dst = (uint32_t*)(0x20000);  // 백업 영역 시작 주소
+    uint32_t* src = (uint32_t*)(dfuBuffer + sizeof(FirmwareHeader));
+    size_t wordCount = (expectedImageSize - sizeof(FirmwareHeader)) / 4;
+
+    // Flash 메모리 쓰기 보호 해제
+    NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Wen;
+    while (NRF_NVMC->READY == NVMC_READY_READY_Busy);
+
+    // 백업 영역 초기화
+    for (size_t i = 0; i < wordCount; i++) {
+        *dst++ = *src++;
+        while (NRF_NVMC->READY == NVMC_READY_READY_Busy);
+    }
+
+    // 업데이트 플래그 설정
+    NRF_POWER->GPREGRET = 0x68;
+    
+    // 시스템 리셋 전 잠시 대기
+    delay(100);
+    
+    // 워치독 타이머 설정 (리셋 보장)
+    NRF_WDT->CONFIG = 0x01;
+    NRF_WDT->CRV = 32;
+    NRF_WDT->RREN = 1;
+    NRF_WDT->TASKS_START = 1;
+    
+    // 시스템 리셋
+    NVIC_SystemReset();
+}
+
+uint32_t DFUService::calculateCRC32(const uint8_t* data, size_t length) {
+    uint32_t crc = 0xFFFFFFFF;
+    
+    for (size_t i = 0; i < length; i++) {
+        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    }
+    
+    return crc ^ 0xFFFFFFFF;
+}
+
+bool DFUService::allocateBuffer(uint32_t size) {
+    freeBuffer();
+    
+    if (size > DFU_BUFFER_SIZE) {
+        return false;
+    }
+    
+    dfuBuffer = (uint8_t*)malloc(size);
+    return dfuBuffer != nullptr;
+}
+
+void DFUService::freeBuffer() {
+    if (dfuBuffer) {
+        free(dfuBuffer);
+        dfuBuffer = nullptr;
+    }
+    dfuBufferOffset = 0;
+}
+
+void DFUService::notifyProgress() {
+    uint32_t progress = (dfuBufferOffset * 100) / expectedImageSize;
+    
+    // 진행률이 변경된 경우에만 통지
+    if (progress != lastProgress) {
+        lastProgress = progress;
+        uint8_t response[2] = {DFU_STATE_RECEIVING, (uint8_t)progress};
+        dfuControlChar.notify(response, 2);
+    }
+}
+
+void DFUService::setError(DFUError error) {
+    lastError = error;
+    dfuState = DFU_STATE_ERROR;
+    
+    DEBUG_PRINTF("DFU Error: %d\n", error);
+    
+    uint8_t response[2] = {dfuState, (uint8_t)error};
+    dfuControlChar.notify(response, 2);
+    
+    // 에러 발생 시 버퍼 해제
+    freeBuffer();
+}
+
+void DFUService::onDFUControlReceived(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    if (instance) {
+        instance->processControlCommand(data, len);
+    }
+}
+
+void DFUService::onDFUPacketReceived(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    if (instance) {
+        instance->processDataPacket(data, len);
+    }
+}
